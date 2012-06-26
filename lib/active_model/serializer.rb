@@ -51,6 +51,7 @@ module ActiveModel
     def as_json(*args)
       @options[:hash] = hash = {}
       @options[:unique_values] = {}
+      @options[:serialized_in_root] = {}
 
       array = serializable_array.map do |item|
         if item.respond_to?(:serializable_hash)
@@ -140,6 +141,27 @@ module ActiveModel
           end
         end
 
+        def already_serialized=(value)
+          @already_serialized = value
+        end
+
+
+        def already_serialized?(item)
+          return false if @already_serialized == nil
+
+          id = item.read_attribute_for_serialization(:id)
+          return (@already_serialized.has_key?(self.key) and @already_serialized[self.key].has_key?(id))
+        end
+
+
+        def itemSerialized(item)
+          return if @already_serialized == nil
+          @already_serialized[self.key] = {} if !@already_serialized.has_key?(self.key)
+
+          id = item.read_attribute_for_serialization(:id)
+          @already_serialized[self.key][id] = true
+        end
+
         def target_serializer
           option(:serializer)
         end
@@ -176,13 +198,17 @@ module ActiveModel
           option(:include, source_serializer._root_embed)
         end
 
+        def serializer_options
+          source_serializer.options.merge( option(:serializer_options, {}) )
+        end
+
       protected
 
         def find_serializable(object)
           if target_serializer
-            target_serializer.new(object, source_serializer.options)
+            target_serializer.new(object, serializer_options)
           elsif object.respond_to?(:active_model_serializer) && (ams = object.active_model_serializer)
-            ams.new(object, source_serializer.options)
+            ams.new(object, serializer_options)
           else
             object
           end
@@ -194,7 +220,12 @@ module ActiveModel
 
         def serialize
           associated_object.map do |item|
-            find_serializable(item).serializable_hash
+            #if already_serialized?(item)
+            #  {}
+            #else
+              itemSerialized(item)
+              find_serializable(item).serializable_hash
+            #end
           end
         end
         alias serialize_many serialize
@@ -215,13 +246,18 @@ module ActiveModel
         end
 
         def serialize
-          object = associated_object
-          object && find_serializable(object).serializable_hash
+          value = nil
+          if object = associated_object
+            # if !already_serialized?(object)
+              itemSerialized(object)
+              value = find_serializable(object).serializable_hash
+            # end
+          end
+          return value
         end
 
         def serialize_many
-          object = associated_object
-          value = object && find_serializable(object).serializable_hash
+          value = self.serialize
           value ? [value] : []
         end
 
@@ -397,6 +433,7 @@ module ActiveModel
       if root = options.fetch(:root, @options.fetch(:root, _root))
         @options[:hash] = hash = {}
         @options[:unique_values] = {}
+        @options[:serialized_in_root] = {}
 
         hash.merge!(root => serializable_hash)
         hash
@@ -439,6 +476,22 @@ module ActiveModel
       end
     end
 
+
+    def already_serialized_to_root?(key, id)
+      return ( @options[:serialized_in_root] and @options[:serialized_in_root].has_key?(key) and @options[:serialized_in_root][key].has_key?(id) )
+    end
+
+
+    def include_at_root(name, attribute_key, root_key, options)
+      value = @object.attributes[attribute_key.to_s]
+      if (value == nil) or (already_serialized_to_root?(root_key, value))
+        options[:node].merge!( { name => value })
+      else
+        options = { :key => root_key, :embed => :ids,  :include => true, :value => @object.send( name) }.merge( options )
+        include!( name,  options )
+      end
+    end
+
     def include!(name, options={})
       # Make sure that if a special options[:hash] was passed in, we generate
       # a new unique values hash and don't clobber the original. If the hash
@@ -476,6 +529,7 @@ module ActiveModel
         node[association.key] = association.serialize_ids
 
         if association.embed_in_root?
+          association.already_serialized = @options[:serialized_in_root]
           merge_association hash, association.root, association.serialize_many, unique_values
         end
       elsif association.embed_objects?
