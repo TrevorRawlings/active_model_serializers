@@ -156,10 +156,10 @@ module ActiveModel
 
         def itemSerialized(item)
           return if @already_serialized == nil
-          @already_serialized[self.key] = {} if !@already_serialized.has_key?(self.key)
+          @already_serialized[self.root] = {} if !@already_serialized.has_key?(self.root)
 
           id = item.read_attribute_for_serialization(:id)
-          @already_serialized[self.key][id] = true
+          @already_serialized[self.root][id] = true
         end
 
         def target_serializer
@@ -487,7 +487,7 @@ module ActiveModel
       if (value == nil) or (already_serialized_to_root?(root_key, value))
         options[:node].merge!( { name => value })
       else
-        options = { :key => root_key, :embed => :ids,  :include => true, :value => @object.send( name) }.merge( options )
+        options = { :key => name, :root => root_key, :embed => :ids,  :include => true, :value => @object.send( name) }.merge( options )
         include!( name,  options )
       end
     end
